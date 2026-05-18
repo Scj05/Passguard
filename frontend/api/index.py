@@ -7,10 +7,13 @@ app = FastAPI()
 class PasswordRequest(BaseModel):
     password: str
 
+@app.get("/")
+@app.get("/health")
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
 
+@app.post("/check-password")
 @app.post("/api/check-password")
 def check_password(data: PasswordRequest):
     result = zxcvbn(data.password)
