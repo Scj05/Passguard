@@ -6,18 +6,42 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [history, setHistory] = useState([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const savedHistory = JSON.parse(localStorage.getItem("passguard-history")) || [];
+    const savedHistory =
+      JSON.parse(localStorage.getItem("passguard-history")) || [];
     setHistory(savedHistory);
   }, []);
 
+  const getStrengthLabel = (score) => {
+    const labels = ["Very Weak", "Weak", "Fair", "Strong", "Very Strong"];
+    return labels[score] || "Unknown";
+  };
+
+  const getPatternRisk = (score) => {
+    if (score === 0) return 95;
+    if (score === 1) return 75;
+    if (score === 2) return 50;
+    if (score === 3) return 25;
+    if (score === 4) return 10;
+    return 0;
+  };
+
+  const maskPassword = (value) => {
+    if (!value) return "";
+    if (value.length <= 2) return "*".repeat(value.length);
+    return value[0] + "*".repeat(value.length - 2) + value[value.length - 1];
+  };
+
   const saveToHistory = (data) => {
+    if (!data) return;
+
     const newEntry = {
-      masked_password: data.masked_password,
-      strength_percent: data.strength_percent,
-      strength_label: data.strength_label,
-      breach_count: data.breach_count,
+      masked_password: maskPassword(password),
+      strength_percent: data.strength_percent || 0,
+      strength_label: getStrengthLabel(data.score),
+      breach_count: "Not checked",
       date: new Date().toLocaleString(),
     };
 
@@ -28,22 +52,33 @@ function App() {
 
   const analyzePassword = async (value) => {
     setPassword(value);
+    setError("");
 
     if (!value) {
       setAnalysis(null);
       return;
     }
 
-    const response = await fetch("/api/check-password", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ password: value }),
-    });
+    try {
+      const response = await fetch("/api/check-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password: value }),
+      });
 
-    const data = await response.json();
-    setAnalysis(data);
+      if (!response.ok) {
+        throw new Error("Password check failed");
+      }
+
+      const data = await response.json();
+      setAnalysis(data);
+    } catch (err) {
+      console.error(err);
+      setAnalysis(null);
+      setError("Password analysis is unavailable right now.");
+    }
   };
 
   const clearHistory = () => {
@@ -59,8 +94,18 @@ function App() {
     "bg-emerald-400",
   ];
 
-  const activeBarColor = analysis ? barColors[analysis.score] : "bg-slate-700";
-  const patternSafety = analysis ? 100 - analysis.pattern_risk : 0;
+  const activeBarColor =
+    analysis && typeof analysis.score === "number"
+      ? barColors[analysis.score]
+      : "bg-slate-700";
+
+  const strengthPercent = analysis?.strength_percent || 0;
+  const strengthLabel = analysis ? getStrengthLabel(analysis.score) : "Waiting...";
+  const crackTime = analysis?.crack_time || "Unavailable";
+  const patternRisk = analysis ? getPatternRisk(analysis.score) : 0;
+  const patternSafety = 100 - patternRisk;
+  const suggestions = analysis?.suggestions || [];
+  const warning = analysis?.warning || "";
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-6">
@@ -71,15 +116,15 @@ function App() {
           transition={{ duration: 0.5 }}
           className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl"
         >
-           <h1 className="text-4xl font-bold mb-2">PassGuard</h1>
-
-<p className="text-slate-400 mb-8">
-  Password Security & Breach Analysis Tool
-</p>
+          <h1 className="text-4xl font-bold mb-2">PassGuard</h1>
 
           <p className="text-slate-400 mb-8">
-            Full-stack password analyzer with FastAPI, breach detection, attack
-            simulation, and pattern-risk scoring.
+            Password Security & Strength Analysis Tool
+          </p>
+
+          <p className="text-slate-400 mb-8">
+            Full-stack password analyzer with FastAPI, attack simulation, and
+            password strength scoring.
           </p>
 
           <label className="block text-sm text-slate-300 mb-2">
@@ -88,18 +133,17 @@ function App() {
 
           <div className="relative">
             <input
-  type={showPassword ? "text" : "password"}
-  value={password}
-  onChange={(e) => analyzePassword(e.target.value)}
-  onKeyDown={(e) => {
-    if (e.key === "Enter" && analysis) {
-      saveToHistory(analysis);
-    }
-  }}
-  placeholder="Type password here..."
-  className="w-full p-4 pr-16 rounded-xl bg-slate-950 border border-slate-700 outline-none focus:border-blue-500"
-/>
-          
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => analyzePassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && analysis) {
+                  saveToHistory(analysis);
+                }
+              }}
+              placeholder="Type password here..."
+              className="w-full p-4 pr-16 rounded-xl bg-slate-950 border border-slate-700 outline-none focus:border-blue-500"
+            />
 
             <button
               type="button"
@@ -110,24 +154,30 @@ function App() {
             </button>
           </div>
 
+          {error && (
+            <div className="mt-6 p-4 rounded-xl bg-red-950 border border-red-800">
+              <p className="text-red-200">{error}</p>
+            </div>
+          )}
+
           <div className="mt-6">
             <div className="h-4 bg-slate-800 rounded-full overflow-hidden">
               <div
                 className={`h-full ${activeBarColor} transition-all duration-300`}
-                style={{ width: `${analysis ? analysis.strength_percent : 0}%` }}
+                style={{ width: `${strengthPercent}%` }}
               />
             </div>
 
             <p className="mt-3 text-xl font-semibold">
               Strength:{" "}
               {analysis
-                ? `${analysis.strength_label} (${analysis.strength_percent}%)`
+                ? `${strengthLabel} (${strengthPercent}%)`
                 : "Waiting..."}
             </p>
 
             {analysis && (
               <p className="text-slate-400 mt-2">
-                Estimated crack time: {analysis.estimated_crack_time}
+                Estimated crack time: {crackTime}
               </p>
             )}
           </div>
@@ -137,7 +187,7 @@ function App() {
               <div className="flex justify-between items-center mb-3">
                 <h2 className="text-xl font-semibold">Pattern Risk Score</h2>
                 <span className="text-sm text-slate-400">
-                  {analysis.pattern_risk}% risk
+                  {patternRisk}% risk
                 </span>
               </div>
 
@@ -149,8 +199,8 @@ function App() {
               </div>
 
               <p className="text-slate-400 text-sm mt-3">
-                Checks length, character variety, repeated characters, common
-                words, and date patterns.
+                Estimates how predictable the password may be based on common
+                password patterns and the zxcvbn score.
               </p>
             </div>
           )}
@@ -159,35 +209,28 @@ function App() {
             <div className="mt-6 p-5 rounded-2xl bg-slate-950 border border-slate-800">
               <h2 className="text-xl font-semibold mb-2">Breach Detection</h2>
 
-              {analysis.breach_count === -1 ? (
-                <p className="text-yellow-300">
-                  Breach check unavailable right now.
-                </p>
-              ) : analysis.breach_count > 0 ? (
-                <p className="text-red-300">
-                  This password appeared in breaches{" "}
-                  <strong>{analysis.breach_count.toLocaleString()}</strong>{" "}
-                  times. Do not use it.
-                </p>
-              ) : (
-                <p className="text-emerald-300">
-                  No known breach match found.
-                </p>
-              )}
+              <p className="text-yellow-300">
+                Breach checking is not enabled in this deployed version.
+              </p>
+
+              <p className="text-slate-400 text-sm mt-2">
+                This version focuses on password strength analysis and attack
+                simulation.
+              </p>
             </div>
           )}
 
-          {analysis && analysis.warning && (
+          {analysis && warning && (
             <div className="mt-6 p-4 rounded-xl bg-red-950 border border-red-800">
               <h2 className="font-semibold text-red-300">Warning</h2>
-              <p className="text-red-100 mt-1">{analysis.warning}</p>
+              <p className="text-red-100 mt-1">{warning}</p>
             </div>
           )}
 
-          {analysis && analysis.suggestions.length > 0 && (
+          {analysis && suggestions.length > 0 && (
             <div className="mt-6 p-4 rounded-xl bg-slate-950 border border-slate-800">
               <h2 className="font-semibold mb-2">Suggestions</h2>
-              {analysis.suggestions.map((suggestion, index) => (
+              {suggestions.map((suggestion, index) => (
                 <p key={index} className="text-slate-300">
                   • {suggestion}
                 </p>
@@ -205,30 +248,38 @@ function App() {
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
                   <h3 className="font-semibold mb-2">Dictionary Attack</h3>
                   <p className="text-blue-400 text-sm mb-2">
-                    {analysis.attack_simulation.dictionary_attack}
+                    {analysis?.attack_methods?.dictionary_attack?.risk ||
+                      "Unknown"}{" "}
+                    Risk
                   </p>
                   <p className="text-slate-400 text-sm">
-                    Uses leaked passwords and common wordlists.
+                    {analysis?.attack_methods?.dictionary_attack?.description ||
+                      "Checks whether the password contains common words, names, or predictable patterns."}
                   </p>
                 </div>
 
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
-                  <h3 className="font-semibold mb-2">Slow Hash Attack</h3>
+                  <h3 className="font-semibold mb-2">Brute Force Attack</h3>
                   <p className="text-blue-400 text-sm mb-2">
-                    {analysis.attack_simulation.slow_hash_attack}
+                    {analysis?.attack_methods?.brute_force?.risk || "Unknown"}{" "}
+                    Risk
                   </p>
                   <p className="text-slate-400 text-sm">
-                    Simulates a better-protected password storage system.
+                    {analysis?.attack_methods?.brute_force?.description ||
+                      "Estimates how difficult the password is to guess by trying many possible combinations."}
                   </p>
                 </div>
 
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
-                  <h3 className="font-semibold mb-2">Online Guessing</h3>
+                  <h3 className="font-semibold mb-2">Pattern Matching</h3>
                   <p className="text-blue-400 text-sm mb-2">
-                    {analysis.attack_simulation.online_attack}
+                    {analysis?.attack_methods?.pattern_matching?.risk ||
+                      "Unknown"}{" "}
+                    Risk
                   </p>
                   <p className="text-slate-400 text-sm">
-                    Simulates slower login attempts against a live system.
+                    {analysis?.attack_methods?.pattern_matching?.description ||
+                      "Looks for predictable structures like repeated characters, keyboard patterns, or simple substitutions."}
                   </p>
                 </div>
               </div>
@@ -277,10 +328,7 @@ function App() {
                   Strength: {item.strength_label} ({item.strength_percent}%)
                 </p>
                 <p className="text-slate-300 text-sm">
-                  Breaches:{" "}
-                  {item.breach_count === -1
-                    ? "Unavailable"
-                    : item.breach_count.toLocaleString()}
+                  Breaches: {item.breach_count}
                 </p>
                 <p className="text-slate-500 text-xs mt-2">{item.date}</p>
               </div>
